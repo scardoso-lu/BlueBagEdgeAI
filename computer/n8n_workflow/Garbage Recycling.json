@@ -1,0 +1,207 @@
+{
+  "name": "Garbage Recycling",
+  "nodes": [
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Output TRUE or FALSE only.\n\nReturn TRUE if the item is recyclable:\nPLASTIC, METAL, CARDBOARD\n\nReturn FALSE if the item is:\nGLASS, PAPER, black plastic, styrofoam, multilayer packaging, medicine leaflets.\n\nItem:\n{{ $json.message.parseJson()['detections'][0]['label']}}\n",
+        "hasOutputParser": true,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "position": [
+        1024,
+        -144
+      ],
+      "id": "ffb267e0-79a1-4438-bac6-4823908ac12c",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        656,
+        -128
+      ],
+      "id": "cf8bd0eb-c4f1-41bd-a669-13f27deb3c79",
+      "name": "Ollama Chat Model",
+      "credentials": {
+        "ollamaApi": {
+          "id": "xHuYe0MDGOs9IpBW",
+          "name": "Local Ollama service"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "channels": "yolo:detections",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.redisTrigger",
+      "typeVersion": 1,
+      "position": [
+        496,
+        16
+      ],
+      "id": "5b9a7715-f52b-457d-850a-f89b8b9bee5d",
+      "name": "Redis Trigger",
+      "credentials": {
+        "redis": {
+          "id": "LuP2Ti3FQunIc6t7",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "publish",
+        "channel": "yolo:light_state",
+        "messageData": "={{ $json.output }}"
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        32
+      ],
+      "id": "86b49ee4-89a8-4f11-a220-8e672e04d3de",
+      "name": "Redis",
+      "credentials": {
+        "redis": {
+          "id": "LuP2Ti3FQunIc6t7",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "61ab3893-64d5-47bc-a959-2774690574d6",
+              "leftValue": "={{ $json.message}}",
+              "rightValue": "{\"status\": \"OFF\"}",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        672,
+        16
+      ],
+      "id": "9aa7bd41-4e50-4a9a-8471-735644a1e610",
+      "name": "If",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"output\": \"OFF\"\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        880,
+        112
+      ],
+      "id": "6dd9e89e-45e2-4b7f-9b31-14f81e21c435",
+      "name": "Edit Fields",
+      "alwaysOutputData": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Ollama Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis Trigger": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Redis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Redis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "637e7d97-0ef6-4c3e-b262-1cfcc6414b54",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "12211c05f9f844e567a95cd4c6bbd5d1115fca77315d61007d24dca6e487bf75"
+  },
+  "id": "mH2du3OtOgInZjVZ",
+  "tags": []
+}
