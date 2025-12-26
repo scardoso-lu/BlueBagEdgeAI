@@ -210,3 +210,7 @@ dataset/
 models/
 runs/
 *.pt
+*.hef
+output/
+inputs/
+*.mp4
