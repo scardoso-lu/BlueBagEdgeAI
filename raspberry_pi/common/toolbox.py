@@ -17,6 +17,7 @@ import difflib
 IMAGE_EXTENSIONS: Tuple[str, ...] = ('.jpg', '.png', '.bmp', '.jpeg')
 CAMERA_INDEX = int(os.environ.get('CAMERA_INDEX', '0'))
 RESOURCES_DOWNLOAD_DIR = Path(__file__).resolve().parents[1] / "resources_download"
+
 GET_HEF_BASH_SCRIPT_PATH   = RESOURCES_DOWNLOAD_DIR / "get_hef.sh"
 GET_INPUT_BASH_SCRIPT_PATH = RESOURCES_DOWNLOAD_DIR / "get_input.sh"
 RESOLUTION_MAP = {
@@ -36,9 +37,11 @@ def resolve_output_resolution_arg(res_arg: Optional[list[str]]) -> Optional[Tupl
     if res_arg is None:
         return None
 
+    print(res_arg)
     # Single token: preset name (sd/hd/fhd)
     if len(res_arg) == 1:
         key = res_arg[0]
+        print(key)
         if key in RESOLUTION_MAP:
             return RESOLUTION_MAP[key]
         raise ValueError(
@@ -100,6 +103,8 @@ def run_get_hef_command(args: list[str]) -> subprocess.CompletedProcess:
     Wrapper around get_hef.sh with app-level error handling.
     Handles the 'no device detected' case nicely.
     """
+    print("run_get_hef_command")
+    print(GET_HEF_BASH_SCRIPT_PATH, args)
     result = run_bash_helper(GET_HEF_BASH_SCRIPT_PATH, args)
 
     if result.returncode != 0:
@@ -258,10 +263,11 @@ def resolve_net_arg(app: str, net_arg: str | None, dest_dir: str = "hefs") -> st
     if existing_hef.exists():
         # There is already a HEF file with this name in dest_dir
         try:
-            answer = input(
+            logger.info(
                 f"A HEF file already exists for network '{net_name}': {existing_hef}\n"
                 "Do you want to reuse this file instead of downloading it again? [Y/n]: "
             )
+            answer = "y"
         except EOFError:
             # Non-interactive scenario: default to reuse existing file
             answer = "y"
@@ -296,7 +302,7 @@ def resolve_net_arg(app: str, net_arg: str | None, dest_dir: str = "hefs") -> st
                 sys.exit(1)
 
     # 5) No existing HEF with that name -> download normally
-    logger.info(f"Downloading model name {net_name}, please wait...")
+    logger.info(f"Downloading model name {net_name}, into {dest_dir}, please wait...")
     hef_path_str = get_hef(app, net_name, dest_dir)
     hef_path = Path(hef_path_str).resolve()
     logger.success(f"Download complete: {hef_path}")
@@ -337,7 +343,7 @@ def get_hef(app: str, net: str, dest_dir: str = "hefs") -> str:
     return str(hef_path)
 
 
-def resolve_input_arg(app: str, input_arg: str | None) -> str:
+def resolve_input_arg(app: str, input_arg: str | None, target_dir="inputs") -> str:
     """
     Resolve the --input/-i argument into a concrete value to use in the app.
 
@@ -370,7 +376,7 @@ def resolve_input_arg(app: str, input_arg: str | None) -> str:
             sys.exit(1)
 
         if answer.strip().lower() in ("y", "yes", ""):
-            return download_input(app, "default", target_dir="inputs")
+            return download_input(app, "default", target_dir=target_dir)
         else:
             logger.error(
                 "No input provided. Please run again with -i/--input or accept the default resource."
@@ -382,6 +388,7 @@ def resolve_input_arg(app: str, input_arg: str | None) -> str:
         return input_arg
 
     path_candidate = Path(input_arg)
+    print(f"path candidate: {path_candidate}")
 
     # If it already exists (file or dir), just use it as-is
     if path_candidate.exists():
@@ -399,7 +406,7 @@ def resolve_input_arg(app: str, input_arg: str | None) -> str:
         f"Input '{input_arg}' does not exist as a local file or directory. "
         "Assuming this is a resource ID and downloading from inputs.json..."
     )
-    return download_input(app, input_arg, target_dir="inputs")
+    return download_input(app, input_arg, target_dir)
 
 
 
@@ -528,7 +535,6 @@ def init_input_source(input_path, batch_size, camera_resolution):
     """
     cap = None
     images = None
-
     if input_path == "camera" or input_path.startswith(("http://", "https://", "rtsp://")):
         if input_path.startswith(("http://", "https://", "rtsp://")):
             cap = cv2.VideoCapture(input_path)        
@@ -907,84 +913,90 @@ def visualize(
         framerate: Override output video FPS (optional).
         side_by_side: If True, the callback returns a wide comparison frame.
     """
-    image_id = 0
-    out = None
-    frame_width = None
-    frame_height = None
+    try:
+        image_id = 0
+        out = None
+        frame_width = None
+        frame_height = None
 
-    # Window + writer init (only for camera/video, not images)
-    if cap is not None:
-        cv2.namedWindow("Output", cv2.WND_PROP_FULLSCREEN)
-        cv2.setWindowProperty("Output", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-
-        base_width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 640)
-        base_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 480)
-
-        if output_resolution is not None:
-            target_w, target_h = output_resolution
-        else:
-            target_w, target_h = base_width, base_height
-
-        frame_width  = target_w * (2 if side_by_side else 1)
-        frame_height = target_h
-
-        if save_stream_output:
-            cam_fps   = cap.get(cv2.CAP_PROP_FPS)
-            final_fps = framerate or (cam_fps if cam_fps and cam_fps > 1 else 30.0)
-
-            os.makedirs(output_dir, exist_ok=True)
-            out_path = os.path.join(output_dir, "output.avi")
-            out = cv2.VideoWriter(
-                out_path,
-                cv2.VideoWriter_fourcc(*"XVID"),
-                final_fps,
-                (frame_width, frame_height),
-            )
-
-    # Main loop
-    while True:
-        result = output_queue.get()
-        if result is None:
-            output_queue.task_done()
-            break
-
-        original_frame, inference_result, *rest = result
-
-        if isinstance(inference_result, list) and len(inference_result) == 1:
-            inference_result = inference_result[0]
-
-        if rest:
-            frame_with_detections = callback(original_frame, inference_result, rest[0])
-        else:
-            frame_with_detections = callback(original_frame, inference_result)
-
-        if fps_tracker is not None:
-            fps_tracker.increment()
-
-        bgr_frame = cv2.cvtColor(frame_with_detections, cv2.COLOR_RGB2BGR)
-        frame_to_show = resize_frame_for_output(bgr_frame, output_resolution)
-
+        # Window + writer init (only for camera/video, not images)
         if cap is not None:
-            cv2.imshow("Output", frame_to_show)
-            if save_stream_output and out is not None and frame_width and frame_height:
-                frame_to_save = cv2.resize(frame_to_show, (frame_width, frame_height))
-                out.write(frame_to_save)
-        else:
-            cv2.imwrite(os.path.join(output_dir, f"output_{image_id}.png"), frame_to_show)
+            cv2.namedWindow("Output", cv2.WND_PROP_FULLSCREEN)
+            cv2.setWindowProperty("Output", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
-        image_id += 1
-        output_queue.task_done()
+            base_width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 640)
+            base_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 480)
 
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            if save_stream_output and out is not None:
-                out.release()
+            if output_resolution is not None:
+                target_w, target_h = output_resolution
+            else:
+                target_w, target_h = base_width, base_height
+
+            frame_width  = target_w * (2 if side_by_side else 1)
+            frame_height = target_h
+
+            if save_stream_output:
+                cam_fps   = cap.get(cv2.CAP_PROP_FPS)
+                final_fps = framerate or (cam_fps if cam_fps and cam_fps > 1 else 30.0)
+
+                os.makedirs(output_dir, exist_ok=True)
+                out_path = os.path.join(output_dir, "output.avi")
+                out = cv2.VideoWriter(
+                    out_path,
+                    cv2.VideoWriter_fourcc(*"XVID"),
+                    final_fps,
+                    (frame_width, frame_height),
+                )
+
+        # Main loop
+        while True:
+            result = output_queue.get()
+            if result is None:
+                output_queue.task_done()
+                break
+
+            original_frame, inference_result, *rest = result
+
+            if isinstance(inference_result, list) and len(inference_result) == 1:
+                inference_result = inference_result[0]
+
+            if rest:
+                frame_with_detections = callback(original_frame, inference_result, rest[0])
+            else:
+                frame_with_detections = callback(original_frame, inference_result)
+
+            if fps_tracker is not None:
+                fps_tracker.increment()
+
+            bgr_frame = cv2.cvtColor(frame_with_detections, cv2.COLOR_RGB2BGR)
+            frame_to_show = resize_frame_for_output(bgr_frame, output_resolution)
+
             if cap is not None:
-                cap.release()
-            cv2.destroyAllWindows()
-            break
+                cv2.imshow("Output", frame_to_show)
+                if save_stream_output and out is not None and frame_width and frame_height:
+                    frame_to_save = cv2.resize(frame_to_show, (frame_width, frame_height))
+                    out.write(frame_to_save)
+            else:
+                cv2.imwrite(os.path.join(output_dir, f"output_{image_id}.png"), frame_to_show)
 
-    if cap is not None and save_stream_output and out is not None:
-        out.release()
+            image_id += 1
+            output_queue.task_done()
+
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                if save_stream_output and out is not None:
+                    out.release()
+                if cap is not None:
+                    cap.release()
+                cv2.destroyAllWindows()
+                break
+
+        if cap is not None and save_stream_output and out is not None:
+            out.release()
+        if cap is not None:
+            cap.release()
+    finally:
+        cv2.destroyAllWindows()  # <--- ensure window is closed
+
 
 
 

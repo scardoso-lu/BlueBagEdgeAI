@@ -13,7 +13,11 @@ from pathlib import Path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from common.tracker.byte_tracker import BYTETracker
 from common.hailo_inference import HailoInfer
-from object_detection_post_process import inference_result_handler
+if os.environ.get("GRAPHIC_UI"):
+    from .object_detection_post_process import inference_result_handler
+else:
+    from object_detection_post_process import inference_result_handler
+
 from common.toolbox import (
     init_input_source,
     get_labels,
@@ -175,7 +179,7 @@ def run_inference_pipeline(net, input, batch_size, labels, output_dir,
     Initialize queues, HailoAsyncInference instance, and run the inference.
     """
     labels = get_labels(labels)
-    config_data = load_json_file("config.json")
+    config_data = load_json_file(os.path.join(".", "object_detection","config.json")) # TODO: Fix config.json load
 
     # Initialize input source from string: "camera", video file, or image folder.
     cap, images = init_input_source(input, batch_size, camera_resolution)
